@@ -8,12 +8,12 @@ and another one called after the variable reviews :
 
 example :
 
-. ${prb_base}
-|
-+--- concrete5.6.0.2          # installation of c5 version 5.6.0.2
-+--- concrete5.6.1            # installation of c5 version 5.6.1
-+--- ${archives}              # directory that will contain all archives
-+--- ${reviews}               # directory that will contain extracted directories
+    . ${prb_base}
+    |
+    +--- concrete5.6.0.2          # installation of c5 version 5.6.0.2
+    +--- concrete5.6.1            # installation of c5 version 5.6.1
+    +--- ${archives}              # directory that will contain all archives
+    +--- ${reviews}               # directory that will contain extracted directories
 
 this script configuration is at the end of the file (this script can actually be used as a lib too)
 
