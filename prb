@@ -1,0 +1,389 @@
+#!/usr/bin/python
+
+# This script is intended to help PRB member to facilitate their review process
+# for this to work, you must create a directory (change the variable prb_base) that contains
+# various installations of c5 named concreteVERISION, a directory called after the variable archive
+# and another one called after the variable reviews :
+#
+# example :
+#
+# . ${prb_base}
+# |
+# +--- concrete5.6.0.2          # installation of c5 version 5.6.0.2
+# +--- concrete5.6.1            # installation of c5 version 5.6.1
+# +--- ${archives}              # directory that will contain all archives
+# +--- ${reviews}               # directory that will contain extracted directories
+# 
+# this script configuration is at the end of the file (this script can actually be used as a lib too)
+
+
+__version__ = '0.9.0' # As shall be any PRB start :D
+__author__  = 'Florian Delizy <florian.delizy@gmail.com>'
+
+import os.path
+import os
+import glob
+import re
+import zipfile
+import shutil
+import copy
+
+
+class PRBRepository :
+
+    def __init__( self, base, archive, reviews ) :
+
+        self._base = base
+        self._archive = archive
+        self._reviews = reviews
+
+        self._c5versions = None
+        self._archives = None
+
+    # simple accessors
+    @property
+    def archivePath(self) : return os.path.join(self._base, self._archive )
+    @property
+    def reviewsPath(self) : return os.path.join(self._base, self._reviews )
+
+    def checkIntegrity( self ) :
+        """ Perform sanity checks on the directory structure """
+        # check that the directory structure is OK
+        for d in ( self._base, self.archivePath, self.reviewsPath ) :
+            if not os.path.isdir( d ) :
+                print "%s shall be a directory!" % d
+                return False
+        return True
+
+    def getC5Versions( self ) :
+        """ get all c5 versions installed in the base dir """
+        if self._c5versions is None :
+
+            versions = {}
+            pattern = re.compile( 'concrete((\d\.?)+)$' )
+            dirs = glob.glob( os.path.join( self._base, 'concrete*' ) )
+            for d in dirs :
+                if not os.path.isdir( d ) : continue
+                dName = os.path.basename(d)
+                g = pattern.match( dName )
+                if g is None :
+                    print "Not a c5 dir %s" % dName
+                    continue
+                versions[g.group(1)] = dName
+            self._c5versions = versions
+        return self._c5versions
+
+    def listVersions( self ) :
+        """ List all c5 versions found in the directory """
+        c5versions = self.getC5Versions()
+        keys = c5versions.keys()
+        keys.sort(key=lambda s: map(int,s.split('.')))
+        print "\n".join(keys)
+
+    def getArchives ( self ) :
+        """ get the list of all added archives : { 'package' : { ver1, ver2, ...} } """
+        if self._archives is None :
+            archives = {}
+
+            prefixes = {}
+            files = glob.glob( os.path.join(self.archivePath, '*.zip' ) )
+            fNames = [ os.path.basename(f) for f in files ]
+            pat = re.compile('^([^-]+)-(.+)\.zip$')
+            prefixes = list(set([ re.match(pat,f).group(1) for f in fNames ]))
+            
+            for p in prefixes :
+                archives[p] = []
+                for f in fNames :
+                    if re.match('^%s-'%p,f) is not None :
+                        archives[p].append( re.match(pat,f).group(2) )
+                archives[p].sort(key=lambda s: map(int,s.split('.')))
+
+            self._archives = archives
+        return self._archives
+
+    def listArchives( self ) :
+        """ list all archives currently present in the archives directory including all their versions """
+        archives = self.getArchives()
+        for a in archives.keys() :
+            print "%s : (%s)" % ( a, ", ".join( archives[a] ))
+
+
+    @staticmethod
+    def _getArchiveHandle( z ) :
+        handle = z.namelist()[0]
+        if not handle.endswith( '/' ) : return None
+        return handle[0:-1]
+
+    @staticmethod
+    def _getPackageVersion( z, handle = None ) :
+        if handle is None : handle = PRBRepository._getArchiveHandle( z )
+        lst = z.namelist()
+        cntPath = os.path.join( handle, 'controller.php' )
+        if ( cntPath not in lst ) :
+            print "%s not found, zip is not a valid package archive" % cntPath
+            return None
+
+        cnt = z.open(cntPath)
+        needle = re.compile('\s*protected\s+\$pkgVersion\s+=\s+[\'"]([^\'"]+)[\'"]\s*;')
+        ver = None
+        for ln in cnt.readlines() :
+            v = needle.match(ln)
+            if v is not None :
+                ver = v.group(1)
+                break
+        cnt.close()
+
+        return ver
+
+    @staticmethod
+    def _getMinimumC5Ver( z, handle = None ) :
+        if handle is None : handle = PRBRepository._getArchiveHandle( z )
+        cntPath = os.path.join( handle, 'controller.php' )
+        if ( cntPath not in z.namelist() ) :
+            print "%s not found, zip is not a valid package archive" % cntPath
+            return None
+
+        cnt = z.open(cntPath)
+        needle = re.compile('\s*protected\s+\$appVersionRequired\s+=\s+[\'"]([^\'"]+)[\'"]\s*;')
+        ver = None
+        for ln in cnt.readlines() :
+            v = needle.match(ln)
+            if v is not None :
+                ver = v.group(1)
+                break
+        cnt.close()
+
+        return ver
+
+    def getPackageInfo( self, archive ) :
+        f = None
+        try :
+            f = zipfile.ZipFile( archive )
+        except Exception as e :
+            print "'%s' invalid zip file %s" % ( archive, repr(e.args) )
+            return False
+
+        # get the structure of the archive (gets the handle):
+
+        handle = PRBRepository._getArchiveHandle( f )
+        if handle is None :
+            print "Invalid archive : files are not contained into a directory !"
+            return False
+        print "HANDLE: %s" % handle
+
+        ver = PRBRepository._getPackageVersion( f )
+        if ver is None :
+            print "Can not get the version of this package"
+            return False
+        print "VERSION: %s" % ver
+        
+
+        minVer = PRBRepository._getMinimumC5Ver( f )
+        if minVer is None : print "Can not guess the mininum required c5 version for this package!"
+        else : print "APPVERSION: %s" % minVer
+        f.close()
+
+        return ( handle, ver, minVer )
+
+    def addC5Version( self, archive ) :
+        versions = self.getC5Versions().keys()
+        pattern = re.compile( 'concrete((\d\.?)+).zip$' )
+        ver = pattern.match(archive )
+
+        if ver is None :
+            print "Archive name not understood, must be concrete5.X.X.X.zip"
+            return False
+        ver = ver.group(1)
+
+        if ver in versions :
+            print "Version %s is already installed in the prb repository, skipping" % ver
+            return False
+
+        print "Installing new version %s" % ver
+        z = zipfile.ZipFile( archive )
+        z.extractall( self._base )
+        return True
+
+    def installPackageVersion( self, package, ver = None , c5 = None ) :
+        """ Install the version ver of the package in c5 version dir (linking it) """
+
+        archives = self.getArchives()
+
+        if package not in archives.keys() :
+            print "Package %s not found in archives, you must add it first" % package
+            return False
+
+        if ver is None : ver = archives[package][-1]
+
+        if ver not in archives[package] :
+            print "%s version %s not found in archives, you must add it first" % ( package, ver )
+            return False
+
+        if c5 is None : c5 = self.getC5Versions().keys()
+        if not isinstance( c5, list ) : c5 = [ c5 ]
+
+        c5versions = self.getC5Versions()
+
+        # check that the package is actually created
+
+        pBase = os.path.join( self.reviewsPath , package )
+        if not os.path.isdir( pBase ) : os.makedirs( pBase )
+
+        archivePath = os.path.join( self.archivePath, "%s-%s.zip" % ( package, ver ) )
+        _, _, minVer = self.getPackageInfo( archivePath )
+
+        pDir = "%s-%s" % ( os.path.join( pBase, package), ver )
+        if not os.path.isdir( pDir ) :
+            # must extract archive
+            print "Extracting %s-%s" % ( package, ver )
+            z = zipfile.ZipFile( archivePath )
+            z.extractall( pBase )
+            z.close()
+            extracted = os.path.join( pBase, package )
+            os.rename( extracted, pDir )
+       
+
+        # remove all candidate versions that do not match the minimum version
+
+        a= copy.copy( c5 )
+        a.append( minVer )
+        a.sort(key=lambda s: map(int,s.split('.')))
+        c5 = a[a.index(minVer)+1:]
+        
+        for c5version in c5 :
+            c5path = os.path.join( self._base, c5versions[c5version], 'packages', package )
+            if os.path.islink( c5path ) : os.remove( c5path )
+            if os.path.exists( c5path ) :
+                print "%s is in the way and is not a link, skipping" % c5path
+                continue
+            print "Installing in %s" % c5version
+            os.symlink( pDir, c5path )
+
+
+    def addArchive( self, archive ) :
+        """ Adds an archive to the review list """
+
+        handle, ver, minVer =  self.getPackageInfo( archive )
+        dest = "%s-%s.zip" % ( handle, ver )
+        destPath = os.path.join( self.archivePath, dest )
+
+        if os.path.exists( destPath ) :
+            print "%s already exists, aborting" % destPath
+            return False
+
+        print "Installing %s into %s" % ( archive, dest )
+        shutil.copyfile( archive, os.path.join( self.archivePath, dest ) )
+        return True
+
+    def createTree( self ) :
+        """ create the directory tree """
+        for d in ( self._base, self.archivePath, self.reviewsPath ) :
+            if not os.path.isdir(d) : os.makedirs(d)
+
+
+if __name__ == '__main__' :
+
+    # Configuration, suits it to your needs :
+    # 
+    prb_base="/home/fdelizy/all_projects/websites/concrete5/prb"
+    archive="archives"
+    reviews="reviews"
+
+    # Configuration END
+
+    # Usage :
+
+    import sys
+    import getopt
+
+    def showUsage() :
+        prb = os.path.basename( sys.argv[0] )
+        print "Usage : %s command [options] [cmd-arguments]" % prb
+        print ""
+        print "%s list-versions [options]                                   : list all concrete5 installation found" % prb
+        print "%s create-repository [options]                               : create a repository tree" % prb
+        print "%s add-version <concrete5.version.zip>                       : uncompress the c5 archive into the prb directory, you still need to configure it yourself" % prb
+        print ""
+        print "%s list-archives [options]                                   : list all archives present in the prb repository" % prb
+        print "%s info [options] <archive.zip>                              : show information about archive.zip" % prb
+        print "%s add [options] <archive.zip>                               : add <archive.zip> to the prb repository" % prb
+        print ""
+        print "%s install [options] <package> [packageVersion] [c5version]  : install the package in the c5 version repository (default all compatible versions)" % prb
+        print ""
+        print "common options (to be appended directly after the command) :"
+        print ""
+        print "--base=<path>     : set the base path of the prb repository"
+        print "--archive=<path>  : set the archive directory (containing addons archives) within the prb repository"
+        print "--reviews=<path>  : set the reviews directory (containing uncompressed addons) within the prb respository"
+        print "--help            : show help and exit"
+
+    # sanity checks :
+    if len( sys.argv ) < 2 :
+        showUsage()
+        sys.exit(1)
+
+
+    # read options and cmd and options from command line
+    cmd = sys.argv[1]
+
+    if cmd == '--help' :
+        showUsage()
+        sys.exit(0)
+
+    opts = [ 'base=' ]
+    go = getopt.getopt( sys.argv[2:], '', opts )
+    args = go[1]
+    for desc in go[0] :
+        opt = desc[0]
+        val = desc[1] if len(desc) > 1 else None
+
+        if opt == '--base' : prb_base = val
+        if opt == '--archive' : archive = val
+        if opt == '--reviews' : reviews = val
+
+    # command functions :
+    def listVersions( repo, args ) : repo.listVersions()
+    def listArchives( repo, args ) : repo.listArchives()
+
+    def oneArgFunc( repofunc, args ) :
+        if len( args ) < 1 :
+            showUsage()
+            sys.exit(1)
+        if not repofunc( args[0] ) : sys.exit(1)
+
+    def addArchive( repo, args )     : oneArgFunc( repo.addArchive, args )
+    def getPackageInfo( repo, args ) : oneArgFunc( repo.getPackageInfo, args )
+    def addC5Version( repo, args )   : oneArgFunc( repo.addC5Version, args )
+
+    def installPackage ( repo, args ) :
+        if len(args) < 1 :
+            showUsage()
+            sys.exit(1)
+        ver = None if len(args) < 2 else args[1]
+        c5 = None if len(args) < 3 else args[2]
+        repo.installPackageVersion( args[0], ver, c5 )
+    
+    # run commands
+    commands = {
+                'list-versions'   : listVersions,
+                'list-archives'   : listArchives,
+                'add'             : addArchive,
+                'info'            : getPackageInfo,
+                'add-version'     : addC5Version,
+                'install'         : installPackage,
+               }
+
+    repo = PRBRepository( prb_base, archive, reviews )
+
+    if cmd == 'create-repository' :
+        sys.exit( 0 if repo.createTree() else 1 )
+
+    if not repo.checkIntegrity() : sys.exit()
+
+
+    if cmd not in commands :
+        print "Unknown command %s" % cmd
+        showUsage()
+        sys.exit()
+
+    commands[cmd]( repo, args )
