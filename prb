@@ -312,11 +312,17 @@ class PRBRepository :
            'helpers/',
            'js/',
            'libraries/',
+           'images/',
+           'images/.*/',
            'models/',
+           'models/.*/',
            'single_pages/',
            'single_pages/.*/',
            'jobs/',
            'tools/',
+           'tools/.*/',
+           'elements/',
+           'elements/.*/',
            'blocks/',
            'blocks/[^/]+/',
            'blocks/[^/]+/.*/',
@@ -346,14 +352,17 @@ class PRBRepository :
         acceptors = acceptors + [ re.compile( "^%s/%s$" % ( package, fname ) ) for fname in commonTree ]
         acceptors = acceptors + [ re.compile( "^%s/.*%s" % ( package, pattern ) ) for pattern in acceptableFiles ]
 
+        count = 0
         for filename in f.namelist() :
             prefix = '!!'
             for check in acceptors :
                 if check.search( filename ) is not None :
                     prefix = '  '
                     break
+            if prefix == '!!' : count = count + 1
             print "%s %s" % (prefix, filename )
 
+        if ( count > 0 ) : print "Found %s suspicious files" % count
         f.close()
         return True
 
