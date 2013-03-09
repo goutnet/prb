@@ -207,20 +207,16 @@ class PRBRepository :
     def installPackageVersion( self, package, ver = None , c5 = None ) :
         """ Install the version ver of the package in c5 version dir (linking it) """
 
-        archives = self.getArchives()
-
-        if package not in archives.keys() :
-            print "Package %s not found in archives, you must add it first" % package
-            return False
-
-        if ver is None : ver = archives[package][-1]
-
-        if ver not in archives[package] :
-            print "%s version %s not found in archives, you must add it first" % ( package, ver )
-            return False
-
         if c5 is None : c5 = self.getC5Versions().keys()
         if not isinstance( c5, list ) : c5 = [ c5 ]
+
+        archivePath = self.getPackageArchive( package, ver )
+
+        if ( archivePath is None ) :
+            needle = package if ver is None else "%s-%s" % (package, ver)
+            print "%s is not found in the archives, you must add it first" % needle
+            return False
+
 
         c5versions = self.getC5Versions()
 
@@ -229,7 +225,6 @@ class PRBRepository :
         pBase = os.path.join( self.reviewsPath , package )
         if not os.path.isdir( pBase ) : os.makedirs( pBase )
 
-        archivePath = os.path.join( self.archivePath, "%s-%s.zip" % ( package, ver ) )
         _, _, minVer = self.getPackageInfo( archivePath )
 
         pDir = "%s-%s" % ( os.path.join( pBase, package), ver )
@@ -281,6 +276,87 @@ class PRBRepository :
             if not os.path.isdir(d) : os.makedirs(d)
 
 
+    def getPackageArchive( self, package, version  = None ) :
+        archives = self.getArchives()
+        if package not in archives.keys() : return None 
+
+        if version is None : version = archives[package][-1]
+        if version not in archives[package] : return None 
+
+        archivePath = os.path.join( self.archivePath, "%s-%s.zip" % ( package, version ) )
+        return archivePath
+
+
+    def checkPackageContent( self, package, version = None ) :
+        """ Output a list of files for the package, putting a !! in from on the suspicious files """
+
+        archive = self.getPackageArchive( package, version )
+
+        if archive is None :
+            needle = package if version is None else "%s-%s" % (package, version)
+            print "%s is not found in the archives, you must add it first" % needle
+            return False
+        print "Content of archive %s" % archive
+
+        f = None
+        try :
+            f = zipfile.ZipFile( archive )
+        except Exception as e :
+            print "'%s' invalid zip file %s" % ( archive, repr(e.args) )
+            return False
+
+        commonTree = [
+           'controllers/',
+           'controllers/.*/',
+           'css/',
+           'helpers/',
+           'js/',
+           'libraries/',
+           'models/',
+           'single_pages/',
+           'single_pages/.*/',
+           'jobs/',
+           'tools/',
+           'blocks/',
+           'blocks/[^/]+/',
+           'blocks/[^/]+/.*/',
+           'INSTALL.TXT',
+           'LICENSE.TXT',
+           'CHANGELOG',
+           'CHANGELOG.txt',
+           'languages/',
+           'languages/.._../',
+           'languages/.._../LC_MESSAGES/',
+           'languages/.._../LC_MESSAGES/messages.mo',
+           'languages/.._../LC_MESSAGES/messages.po',
+        ]
+
+        acceptableFiles = [
+            '.*php$',
+            '.*js$',
+            '.*png$',
+            '.*jpg$',
+            '.*jpeg$',
+            '.*gif$',
+            '.*css$',
+            'db.xml$',
+        ]
+
+        acceptors = [ re.compile( '^%s/$' % package ) ]
+        acceptors = acceptors + [ re.compile( "^%s/%s$" % ( package, fname ) ) for fname in commonTree ]
+        acceptors = acceptors + [ re.compile( "^%s/.*%s" % ( package, pattern ) ) for pattern in acceptableFiles ]
+
+        for filename in f.namelist() :
+            prefix = '!!'
+            for check in acceptors :
+                if check.search( filename ) is not None :
+                    prefix = '  '
+                    break
+            print "%s %s" % (prefix, filename )
+
+        f.close()
+        return True
+
 if __name__ == '__main__' :
 
     # Configuration, suits it to your needs :
@@ -309,6 +385,7 @@ if __name__ == '__main__' :
         print "%s add [options] <archive.zip>                               : add <archive.zip> to the prb repository" % prb
         print ""
         print "%s install [options] <package> [packageVersion] [c5version]  : install the package in the c5 version repository (default all compatible versions)" % prb
+        print "%s check-content <options> <package> [packageVersion]        : check the archive contents to find suspicious files" % prb
         print ""
         print "common options (to be appended directly after the command) :"
         print ""
@@ -345,23 +422,21 @@ if __name__ == '__main__' :
     def listVersions( repo, args ) : repo.listVersions()
     def listArchives( repo, args ) : repo.listArchives()
 
-    def oneArgFunc( repofunc, args ) :
-        if len( args ) < 1 :
+    def funcWrapper( func, args, nbMandatory, haveOptionnals = False ) :
+        if len( args ) < nbMandatory :
             showUsage()
             sys.exit(1)
-        if not repofunc( args[0] ) : sys.exit(1)
+        argList = args if haveOptionnals else args[0:nbMandatory]
+        if not func( *argList ) : sys.exit(1)
+        
+    def oneArgFunc( repofunc, args, hasOptionnalArgs = False ) : funcWrapper( repofunc, args, 1 )
 
     def addArchive( repo, args )     : oneArgFunc( repo.addArchive, args )
     def getPackageInfo( repo, args ) : oneArgFunc( repo.getPackageInfo, args )
     def addC5Version( repo, args )   : oneArgFunc( repo.addC5Version, args )
 
-    def installPackage ( repo, args ) :
-        if len(args) < 1 :
-            showUsage()
-            sys.exit(1)
-        ver = None if len(args) < 2 else args[1]
-        c5 = None if len(args) < 3 else args[2]
-        repo.installPackageVersion( args[0], ver, c5 )
+    def installPackage ( repo, args ) : funcWrapper( repo.installPackageVersion, args, 1, True )
+    def checkContent( repo, args )    : funcWrapper( repo.checkPackageContent, args, 1, True )
     
     # run commands
     commands = {
@@ -371,6 +446,7 @@ if __name__ == '__main__' :
                 'info'            : getPackageInfo,
                 'add-version'     : addC5Version,
                 'install'         : installPackage,
+                'check-content'   : checkContent,
                }
 
     repo = PRBRepository( prb_base, archive, reviews )
