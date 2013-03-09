@@ -204,6 +204,18 @@ class PRBRepository :
         z.extractall( self._base )
         return True
 
+    def uninstallPackage( self, package, c5 = None ) :
+
+        c5versions = self.getC5Versions()
+        if c5 is None : c5 = c5versions.keys()
+        if not isinstance( c5, list ) : c5 = [ c5 ]
+        
+        for ver in c5 :
+            c5path = os.path.join( self._base, c5versions[ver], 'packages', package )
+            if os.path.islink( c5path ) :
+                print "Removing %s from c5 version %s" % ( package, ver )
+                os.remove( c5path )
+
     def installPackageVersion( self, package, ver = None , c5 = None ) :
         """ Install the version ver of the package in c5 version dir (linking it) """
 
@@ -398,6 +410,7 @@ if __name__ == '__main__' :
         print "%s add [options] <archive.zip>                               : add <archive.zip> to the prb repository" % prb
         print ""
         print "%s install [options] <package> [packageVersion] [c5version]  : install the package in the c5 version repository (default all compatible versions)" % prb
+        print "%s uninstall [options] <package> [c5version]                 : uninstall the package link from the c5 version repositry (default, from all c5 versions)" % prb
         print "%s check-content <options> <package> [packageVersion]        : check the archive contents to find suspicious files" % prb
         print ""
         print "common options (to be appended directly after the command) :"
@@ -450,6 +463,7 @@ if __name__ == '__main__' :
 
     def installPackage ( repo, args ) : funcWrapper( repo.installPackageVersion, args, 1, True )
     def checkContent( repo, args )    : funcWrapper( repo.checkPackageContent, args, 1, True )
+    def uninstallPackage( repo, args ): funcWrapper( repo.uninstallPackage, args, 1, True )
     
     # run commands
     commands = {
@@ -460,6 +474,7 @@ if __name__ == '__main__' :
                 'add-version'     : addC5Version,
                 'install'         : installPackage,
                 'check-content'   : checkContent,
+                'uninstall'       : uninstallPackage,
                }
 
     repo = PRBRepository( prb_base, archive, reviews )
