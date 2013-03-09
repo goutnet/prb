@@ -217,6 +217,10 @@ class PRBRepository :
             print "%s is not found in the archives, you must add it first" % needle
             return False
 
+        if ver is None :
+            archives = self.getArchives()
+            ver = archives[package][-1]
+
 
         c5versions = self.getC5Versions()
 
